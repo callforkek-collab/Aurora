@@ -1,0 +1,187 @@
+diff --git a/src/config.ts b/src/config.ts
+index 6e56ae4..e55b289 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -13,6 +13,10 @@ export const NWN_FOLDER_DATA = process.env.NWN_FOLDER_DATA || "";
+ /** Path to the NWN user documents directory — enables custom TLK, HAK, override/, development/ */
+ export const NWN_FOLDER_USER = process.env.NWN_FOLDER_USER || "";
+ 
++/** Text encoding of NWN data files (GFF/TLK/2DA strings and .nss sources), e.g. "windows-1251" for Russian.
++ *  Empty = neverwinter.nim default (windows-1252). */
++export const NWN_ENCODING = process.env.NWN_ENCODING || "";
++
+ export const TEMP_BASE = process.env.MCP_FOLDER_TEMP || path.join(os.tmpdir(), "nwn-mcp");
+ 
+ export function nimtool(name: string): string {
+diff --git a/src/nim-tools.ts b/src/nim-tools.ts
+index fba7ad2..0f962e4 100644
+--- a/src/nim-tools.ts
++++ b/src/nim-tools.ts
+@@ -2,7 +2,7 @@ import { execFile, spawn } from "child_process";
+ import { promisify } from "util";
+ import path from "path";
+ import fs from "fs/promises";
+-import { nimtool } from "./config.js";
++import { nimtool, NWN_ENCODING } from "./config.js";
+ import type { GffDocument } from "./types/gff.js";
+ 
+ const execFileAsync = promisify(execFile);
+@@ -27,6 +27,11 @@ function buildResmanArgs(options: ResmanOptions): string[] {
+   return args;
+ }
+ 
++/** Global --nwn-encoding option for every nimtool call when NWN_ENCODING is set */
++function withEncoding(args: string[]): string[] {
++  return NWN_ENCODING ? ["--nwn-encoding", NWN_ENCODING, ...args] : args;
++}
++
+ /** Run a nimtool and return stdout as string */
+ async function run(
+   tool: string,
+@@ -35,7 +40,7 @@ async function run(
+ ): Promise<string> {
+   const toolPath = nimtool(tool);
+   try {
+-    const { stdout } = await execFileAsync(toolPath, args, {
++    const { stdout } = await execFileAsync(toolPath, withEncoding(args), {
+       cwd: options?.cwd,
+       timeout: options?.timeout ?? EXEC_TIMEOUT,
+       maxBuffer: 50 * 1024 * 1024, // 50MB for large modules
+@@ -63,8 +68,8 @@ function pipe(
+     let settled = false;
+     const settle = (fn: () => void) => { if (!settled) { settled = true; clearTimeout(timer); fn(); } };
+ 
+-    const proc1 = spawn(nimtool(tool1), args1, { stdio: ["ignore", "pipe", "pipe"] });
+-    const proc2 = spawn(nimtool(tool2), args2, { stdio: [proc1.stdout, "pipe", "pipe"] });
++    const proc1 = spawn(nimtool(tool1), withEncoding(args1), { stdio: ["ignore", "pipe", "pipe"] });
++    const proc2 = spawn(nimtool(tool2), withEncoding(args2), { stdio: [proc1.stdout, "pipe", "pipe"] });
+ 
+     let stdout = "";
+     let stderr1 = "";
+@@ -375,6 +380,51 @@ export async function erfTlkify(
+ }
+ 
+ /** Read a text file (e.g., .nss source) */
++/** Windows-1251 upper half (0x80-0xFF) as Unicode, for Russian NWN text */
++const CP1251_HIGH =
++  "\u0402\u0403\u201A\u0453\u201E\u2026\u2020\u2021\u20AC\u2030\u0409\u2039\u040A\u040C\u040B\u040F" +
++  "\u0452\u2018\u2019\u201C\u201D\u2022\u2013\u2014\uFFFD\u2122\u0459\u203A\u045A\u045C\u045B\u045F" +
++  "\u00A0\u040E\u045E\u0408\u00A4\u0490\u00A6\u00A7\u0401\u00A9\u0404\u00AB\u00AC\u00AD\u00AE\u0407" +
++  "\u00B0\u00B1\u0406\u0456\u0491\u00B5\u00B6\u00B7\u0451\u2116\u0454\u00BB\u0458\u0405\u0455\u0457";
++
++function isCp1251(): boolean {
++  return /^(windows-?1251|cp-?1251)$/i.test(NWN_ENCODING);
++}
++
++/** Encode NWScript source for the compiler: string literals are copied byte for byte into .ncs */
++export function encodeNwnText(text: string): Buffer {
++  if (!isCp1251()) return Buffer.from(text, "utf-8");
++  const out = Buffer.alloc(text.length);
++  let n = 0;
++  for (const ch of text) {
++    const code = ch.codePointAt(0)!;
++    if (code < 0x80) out[n++] = code;
++    else if (code >= 0x0410 && code <= 0x044F) out[n++] = code - 0x0410 + 0xC0;
++    else {
++      const i = CP1251_HIGH.indexOf(ch);
++      out[n++] = i >= 0 ? 0x80 + i : 0x3F; // "?" for characters cp1251 cannot hold
++    }
++  }
++  return out.subarray(0, n);
++}
++
++export function decodeNwnText(buf: Buffer): string {
++  if (!isCp1251()) return buf.toString("utf-8");
++  let s = "";
++  for (const b of buf) {
++    if (b < 0x80) s += String.fromCharCode(b);
++    else if (b >= 0xC0) s += String.fromCharCode(b - 0xC0 + 0x0410);
++    else s += CP1251_HIGH[b - 0x80];
++  }
++  return s;
++}
++
++/** Write a .nss source in the configured NWN encoding */
++export async function writeNssFile(filePath: string, source: string): Promise<void> {
++  await fs.writeFile(filePath, encodeNwnText(source));
++}
++
+ export async function readTextFile(filePath: string): Promise<string> {
++  if (/\.nss$/i.test(filePath)) return decodeNwnText(await fs.readFile(filePath));
+   return fs.readFile(filePath, "utf-8");
+ }
+diff --git a/src/tools/adventure-tools.ts b/src/tools/adventure-tools.ts
+index e29effa..1c92ff2 100644
+--- a/src/tools/adventure-tools.ts
++++ b/src/tools/adventure-tools.ts
+@@ -26,7 +26,7 @@ import { resolveBlueprint, getGitDoc, writeBackGit, updateAreaCounts } from "../
+ import { getFieldStr, getFieldNum, getFieldList, setField, setFieldNum } from "../types/gff.js";
+ import type { GffObj, GffDocument } from "../types/gff.js";
+ import { snapshotGitForUndo } from "../util/undo.js";
+-import { compileScript, jsonToGff, erfPack } from "../nim-tools.js";
++import { compileScript, jsonToGff, erfPack, writeNssFile } from "../nim-tools.js";
+ import { checkPlacementWalkable } from "../util/walkmesh.js";
+ import { getTilesetInfo } from "../util/tileset.js";
+ import { generateLayout, groupHasUnsupportedDoors, groupHasCrossers, groupMatchesTerrain, resolveFloorTerrain } from "../util/layout-generator.js";
+@@ -96,7 +96,7 @@ export function registerAdventureTools(server: McpServer): void {
+       // Helper: write + compile a script, register both .nss and .ncs in index.resources
+       async function writeScript(resref: string, source: string): Promise<{ success: boolean; output?: string }> {
+         const nssPath = path.join(index.tempDir, `${resref}.nss`);
+-        await fsPromises.writeFile(nssPath, source, "utf-8");
++        await writeNssFile(nssPath, source);
+         const nssStat = await fsPromises.stat(nssPath);
+         index.resources.set(`${resref}.nss`, { resref, extension: "nss", filePath: nssPath, sizeBytes: nssStat.size });
+         const ncsPath = nssPath.replace(/\.nss$/i, ".ncs");
+diff --git a/src/tools/object-mgmt-tools.ts b/src/tools/object-mgmt-tools.ts
+index cb5d149..bf5901e 100644
+--- a/src/tools/object-mgmt-tools.ts
++++ b/src/tools/object-mgmt-tools.ts
+@@ -20,7 +20,7 @@ import { resolveBlueprint, getGitDoc, writeBackGit, updateAreaCounts, degToRad }
+ import { getFieldStr, getFieldNum, getFieldLocStr, getFieldList, setField } from "../types/gff.js";
+ import type { GffObj } from "../types/gff.js";
+ import { snapshotGitForUndo } from "../util/undo.js";
+-import { compileScript, jsonToGff } from "../nim-tools.js";
++import { compileScript, jsonToGff, writeNssFile, readTextFile } from "../nim-tools.js";
+ import { checkPlacementWalkable } from "../util/walkmesh.js";
+ 
+ /** List names excluded from walkability validation (doors sit on walls, sounds are ambient) */
+@@ -155,7 +155,7 @@ export function registerObjectMgmtTools(server: McpServer): void {
+       const existingScript = index.resources.get(`${scriptResref}.nss`);
+       if (existingScript) {
+         // Read the existing script to check if it points to a different waypoint
+-        const existingSource = await fsPromises.readFile(existingScript.filePath, "utf-8");
++        const existingSource = await readTextFile(existingScript.filePath);
+         if (!existingSource.includes(`"${wpTag}"`)) {
+           return {
+             content: [{
+@@ -177,7 +177,7 @@ export function registerObjectMgmtTools(server: McpServer): void {
+       ].join("\n");
+ 
+       const nssPath = path.join(index.tempDir, `${scriptResref}.nss`);
+-      await fsPromises.writeFile(nssPath, scriptSource, "utf-8");
++      await writeNssFile(nssPath, scriptSource);
+ 
+       const nssStat = await fsPromises.stat(nssPath);
+       index.resources.set(`${scriptResref}.nss`, {
+diff --git a/src/tools/script-tools.ts b/src/tools/script-tools.ts
+index a100cd7..fe75048 100644
+--- a/src/tools/script-tools.ts
++++ b/src/tools/script-tools.ts
+@@ -3,7 +3,7 @@ import path from "path";
+ import fsPromises from "fs/promises";
+ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+ import { requireIndex, buildResmanOptions } from "../module-loader.js";
+-import { readTextFile, disassembleNcs, compileScript } from "../nim-tools.js";
++import { readTextFile, disassembleNcs, compileScript, writeNssFile } from "../nim-tools.js";
+ import type { VariableRef } from "../types/script.js";
+ 
+ export function registerScriptTools(server: McpServer): void {
+@@ -214,7 +214,7 @@ export function registerScriptTools(server: McpServer): void {
+ 
+       // Write .nss file
+       const nssPath = path.join(index.tempDir, `${resrefLower}.nss`);
+-      await fsPromises.writeFile(nssPath, source, "utf-8");
++      await writeNssFile(nssPath, source);
+ 
+       // Register in index
+       const nssStat = await fsPromises.stat(nssPath);
