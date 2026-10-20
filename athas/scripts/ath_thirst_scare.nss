@@ -1,4 +1,4 @@
-// ath_thirsty_scare — Action Taken в ath_dlg_thirsty: «Только подойди». Запугивание.
+// ath_thirst_scare — Action Taken в ath_dlg_thirsty: «Только подойди». Запугивание.
 
 #include "ath_inc_s4"
 

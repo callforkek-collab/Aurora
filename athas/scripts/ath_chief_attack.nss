@@ -1,4 +1,4 @@
-// ath_chief_hostile — Action Taken в ath_dlg_chief: «Вода и оружие — моё».
+// ath_chief_attack — Action Taken в ath_dlg_chief: «Вода и оружие — моё».
 // Все эльфы в локации становятся враждебны; повозку всё равно поджигают.
 
 #include "ath_inc_const"

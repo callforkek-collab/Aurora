@@ -146,12 +146,12 @@ npm run build
 | `ath_dlg_psion` | «А если нет?» | `ath_psion_refuse` |
 | `ath_dlg_psion` | «Попробуй заставь» | `ath_psion_resist` |
 | `ath_dlg_chief` | «Я ухожу» | `ath_confiscate` |
-| `ath_dlg_chief` | «Вода и оружие — моё» | `ath_chief_hostile` |
+| `ath_dlg_chief` | «Вода и оружие — моё» | `ath_chief_attack` |
 | `ath_dlg_thirsty` | «Держи» | `ath_thirsty_give` |
 | `ath_dlg_thirsty` | «Половину» | `ath_thirsty_half` |
-| `ath_dlg_thirsty` | «Только подойди» | `ath_thirsty_scare` |
-| `ath_dlg_thirsty` | «В Урике вас самих закуют…» | `ath_thirsty_bluff` |
-| `ath_dlg_thirsty` | [Атака] | `ath_thirsty_fight` |
+| `ath_dlg_thirsty` | «Только подойди» | `ath_thirst_scare` |
+| `ath_dlg_thirsty` | «В Урике вас самих закуют…» | `ath_thirst_bluff` |
+| `ath_dlg_thirsty` | [Атака] | `ath_thirst_fight` |
 
 Ветки «Почему вы напали?» и «Возьмите меня с собой» в `ath_dlg_chief` видны
 только эльфам: Text Appears When — `ath_c_elf`.
@@ -181,5 +181,28 @@ npm run build
 7. Создать диалоги и журнал (разделы 6–7).
 8. `validate_module`, `find_orphans`, `repack_module`, затем плейтест.
 
-Скрипты здесь не компилировались: в облаке нет `nwscript.nss` и стандартных
-include-файлов игры. Ошибки компиляции покажет `compile_script` локально.
+## 9. Пересборка одной командой
+
+Шаги 2–7 выполняет `build_athas.py`. Тайлы трёх локаций уже положены через
+nwn-mcp (`adventure_apply_layout`) и лежат в `athas-tiles.mod`. Скрипт берёт этот
+модуль, клонирует шаблоны игры, расставляет объекты и триггеры, пишет диалоги,
+журнал и фракции, компилирует `scripts/` в cp1251 и собирает `athas-alk.mod`:
+
+```
+python athas/build_athas.py --base athas/athas-tiles.mod -o "%USERPROFILE%\Documents\Neverwinter Nights\modules\athas-alk.mod"
+```
+
+Если какой-то скрипт не компилируется, сборщик печатает лог компилятора и
+останавливается. После сборки в nwn-mcp: `load_module athas-alk.mod`,
+`fix_object_heights`, `repack_module` (Z объектов по walkmesh).
+
+Отличия от схемы выше:
+
+- L1 — 8×5 тайлов, один зал. Комнаты A–E — контейнеры вдоль северной стены,
+  двери трюма стоят отдельно. Перегородки удобнее нарисовать в тулсете.
+- Дверь `ATH_WAGON_DOOR` ведёт на вейпоинт (LinkedToFlags=2).
+  `check_area_connectivity` и `validate_module` такой переход не понимают и
+  считают L2 недостижимой — это ложная тревога.
+- Проверки навыков в `ath_dlg_guard` и условие «[Псионик, Воля]» в
+  `ath_dlg_psion` не сделаны: для них нужны отдельные скрипты-условия.
+- Экипаж и эльфы — клоны стандартных шаблонов с их стандартным оружием.

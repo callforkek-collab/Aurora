@@ -1,4 +1,4 @@
-// ath_thirsty_bluff — Action Taken в ath_dlg_thirsty: «В Урике вас самих закуют».
+// ath_thirst_bluff — Action Taken в ath_dlg_thirsty: «В Урике вас самих закуют».
 // Блеф: при успехе часть охраны уходит, с остальными бой.
 
 #include "ath_inc_s4"
