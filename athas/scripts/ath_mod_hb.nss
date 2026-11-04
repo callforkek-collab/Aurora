@@ -19,13 +19,19 @@ void main()
     SetLocalInt(oModule, "ATH_BEAT", nBeat);
     int bHeat = (nBeat % ATH_HEAT_EVERY_HB) == 0;
 
+    if (bNewDay)
+        SetLocalInt(oModule, "ATH_DAYNUM", GetLocalInt(oModule, "ATH_DAYNUM") + 1);
+
     object oPC = GetFirstPC();
     while (GetIsObjectValid(oPC))
     {
         if (GetLocalInt(oPC, "ATH_INIT") && !GetIsDead(oPC))
         {
             if (bNewDay)
+            {
                 AthDailyCheck(oPC);
+                ExecuteScript("ath_b2_daily", oPC); // блок 2; без него вызов ничего не делает
+            }
             else if (bNewHour)
                 AthHourly(oPC);
             if (bHeat)

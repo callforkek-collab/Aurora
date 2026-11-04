@@ -29,5 +29,9 @@ void main()
         }
     }
 
+    // Блок 2 (змей, чай из ипра); без scripts_b2 вызов ничего не делает.
+    SetLocalInt(oPC, "ATH_REST_EVENT", nType);
+    ExecuteScript("ath_b2_rest", oPC);
+
     ExecuteScript("x2_mod_def_rest", OBJECT_SELF);
 }
